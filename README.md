@@ -43,8 +43,8 @@ OAuth クライアント発行が必要です。セルフ登録（`/signup`）�
 開発用のSupabaseプロジェクトを使う場合です。本番Cloud SQLへの接続手順ではありません：
 
 ```bash
-git clone https://github.com/godhuu0505/mfmf.git
-cd mfmf
+git clone https://github.com/godhuu0505/mfmf-hackathon.git
+cd mfmf-hackathon
 npm install
 
 cp .env.local.example .env.local   # Supabase の URL / anon key を設定
@@ -60,7 +60,7 @@ Docker（Docker Desktop / Rancher Desktop など）と `just` / Supabase CLI を
 
 ```bash
 brew install just supabase/tap/supabase
-git clone https://github.com/godhuu0505/mfmf.git && cd mfmf
+git clone https://github.com/godhuu0505/mfmf-hackathon.git && cd mfmf-hackathon
 npm install
 ```
 

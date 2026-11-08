@@ -13,7 +13,7 @@ This is a preparation snapshot of an existing mfmf application, not a newly crea
 | Current rights | Original project rights retained; no new OSS/CC license granted |
 | Hosting, paid API calls and live payments started by this copy | None |
 
-`source-copy-manifest.json` records the upstream file hashes and the 11 omitted automation files and six documentation screenshots whose fixture provenance was not established. The README gains this snapshot notice and drops the upstream CI badge. Submission documentation is added separately. Application code, schemas and tests are unchanged from the exact source commit. The omitted screenshots are not application assets or visual-test baselines.
+`source-copy-manifest.json` records the upstream file hashes and the 11 omitted automation files and six documentation screenshots whose fixture provenance was not established. The README gains this snapshot notice, points clone commands to this copy and drops the upstream CI badge. Submission documentation is added separately. Application code, schemas and tests are unchanged from the exact source commit. The omitted screenshots are not application assets or visual-test baselines.
 
 ## Purpose and vision
 
