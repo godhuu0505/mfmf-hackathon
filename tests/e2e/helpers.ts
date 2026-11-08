@@ -1,0 +1,134 @@
+import { expect, test, type Page } from "@playwright/test";
+import { E2E_USER } from "./global-setup";
+
+// spec 横断の共通操作。全 spec が同一の E2E ユーザーを共有する
+// （playwright.config.ts で workers: 1 に固定している前提）。
+
+export async function login(page: Page): Promise<void> {
+  await page.goto("/login");
+  await page.getByLabel("メールアドレス").fill(E2E_USER.email);
+  await page.getByLabel("パスワード").fill(E2E_USER.password);
+  await page.getByRole("button", { name: "メールアドレスでログイン" }).click();
+  await page.waitForURL("**/");
+  await expect(page.getByRole("heading", { name: "記録一覧" })).toBeVisible();
+}
+
+// 記録フォームで本文だけの記録を 1 件残す（テキスト経路の最短）。
+// 記録元は「おうち」に揃える（フォームの既定は保育園）。
+export async function quickRecord(page: Page, note: string): Promise<void> {
+  // このフィクスチャはフルロードを 3 回はさむ（/records/new → /records/{id} → /）。
+  // 既定の 30 秒だと、2 件つくるテストは本題に入る前に予算を使い切る
+  // （クイック記録シート時代は 1 回のクリックで済んでいた）。
+  test.slow();
+  await page.goto("/records/new");
+  await page.getByRole("button", { name: "おうち", exact: true }).click();
+  await page.getByPlaceholder("今日の様子などを記録します").fill(note);
+  await page.getByRole("button", { name: "保存する" }).click();
+  await page
+    .getByRole("dialog", { name: "この内容で保存しますか？" })
+    .getByRole("button", { name: "保存する" })
+    .click();
+  await page.waitForURL(/\/records\/[0-9a-f-]{36}/);
+  await page.goto("/");
+  // 呼び出し側がすぐ Link を押すので、描画とハイドレーションが落ち着くまで待つ
+  await expect(page.getByRole("heading", { name: "記録一覧" })).toBeVisible();
+  await page.waitForLoadState("networkidle", { timeout: 3_000 }).catch(() => {});
+}
+
+// /records/new で 3000x2000 の生成画像を選択し、クライアント側の縮小完了まで待つ。
+// photoUpload.spec の検証と、serviceWorker.spec の「署名付きサムネイルが存在する」
+// 前提づくりの両方から使う（spec 間の実行順依存を作らないため、各 spec が自前で呼ぶ）。
+export async function prepareOversizedPhotoForm(
+  page: Page,
+  body: string,
+): Promise<void> {
+  await page.goto("/records/new");
+  await page.getByPlaceholder("今日の様子などを記録します").fill(body);
+
+  // ノイズを乗せて JPEG が十分な大きさになるようにする（グラデーションだけだと
+  // 圧縮されすぎて「Server Action の本文に画像が入っていない」判定が曖昧になる）
+  await page.evaluate(async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 3000;
+    canvas.height = 2000;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("canvas 2d context が取れない");
+    const grad = ctx.createLinearGradient(0, 0, 3000, 2000);
+    grad.addColorStop(0, "#f59e0b");
+    grad.addColorStop(1, "#0ea5e9");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 3000, 2000);
+    const noise = ctx.getImageData(0, 0, 3000, 2000);
+    for (let i = 0; i < noise.data.length; i += 4) {
+      const n = (Math.random() - 0.5) * 80;
+      noise.data[i] += n;
+      noise.data[i + 1] += n;
+      noise.data[i + 2] += n;
+    }
+    ctx.putImageData(noise, 0, 0);
+    const blob: Blob = await new Promise((resolve, reject) =>
+      canvas.toBlob(
+        (b) => (b ? resolve(b) : reject(new Error("toBlob 失敗"))),
+        "image/png",
+      ),
+    );
+    const file = new File([blob], "e2e-photo.png", { type: "image/png" });
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+    if (!input) throw new Error("file input が見つからない");
+    input.files = dt.files;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+
+  await expect(page.getByText(/最適化しました|スキップしました/)).toBeVisible({
+    timeout: 15_000,
+  });
+  // 縮小がスキップされていたら imageResize が働いていない
+  await expect(page.getByText(/スキップしました/)).not.toBeVisible();
+}
+
+// 写真つき記録を保存して詳細ページへ遷移するまで待つ
+export async function savePhotoRecord(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "保存する" }).click();
+  // 保存の確認ダイアログ（UC-F01 / D33）を通す
+  const confirm = page.getByRole("dialog", {
+    name: "この内容で保存しますか？",
+  });
+  await expect(confirm).toBeVisible();
+  await confirm.getByRole("button", { name: "保存する" }).click();
+  await page.waitForURL(/\/records\/[0-9a-f-]{36}/, { timeout: 30_000 });
+}
+
+// owner として /settings で内部招待を 1 件発行し、招待リンクの絶対 URL を返す。
+// リンクの取り出しは本番と同じコピーボタン経由。
+// 注意点が 2 つあり、どちらも実際に CI を落とした:
+//   - 「招待を発行」は exact 指定が要る（ペットが居るとゲスト招待フォームの
+//     「ゲスト招待を発行」に部分一致して strict mode で落ちる）
+//   - 発行後の反映が稀に固まる（#137。招待自体は作成済み）ためリロードで吸収する
+export async function issueInviteLink(
+  page: Page,
+  email: string,
+): Promise<string> {
+  await page.goto("/settings");
+  await page.locator("#invite_email").fill(email);
+  await page.getByRole("button", { name: "招待を発行", exact: true }).click();
+  try {
+    await expect(page.getByText(email, { exact: false })).toBeVisible({
+      timeout: 15_000,
+    });
+  } catch {
+    await page.reload();
+    await expect(page.getByText(email, { exact: false })).toBeVisible();
+  }
+
+  await page
+    .locator("li", { hasText: email })
+    .first()
+    .getByRole("button", { name: "リンクをコピー" })
+    .click();
+  // writeText の完了を待つ（成功表示が出てからでないと空を読み得る）
+  await expect(page.getByText("コピーしました")).toBeVisible();
+  return page.evaluate(() => navigator.clipboard.readText());
+}

@@ -1,0 +1,130 @@
+import { test, type Page } from "@playwright/test";
+import { issueInviteLink, login } from "./helpers";
+import { interceptRelatedSearch } from "./related-search-helpers";
+
+// UI 変更 PR 用のスクリーンショット生成（CLAUDE.md「Git / PR」参照）。
+// アサーションは持たない。他 spec の後（zz- 接頭辞で最後）に走らせ、
+// 記録が入った状態の画面を test-results/screenshots/ へ保存する。
+// CI の playwright-report アーティファクトに含まれるので、そこから取得して
+// PR にキャプチャとして貼る。
+
+const DIR = "test-results/screenshots";
+
+async function shot(page: Page, name: string, fullPage = true) {
+  await page.waitForTimeout(300); // 遷移直後のスケルトン・トランジションを避ける
+  await page.screenshot({ path: `${DIR}/${name}.png`, fullPage });
+}
+
+test("スクリーンショット一式（ライト）", async ({ page }) => {
+  test.setTimeout(240_000); // 12 画面ぶんの遷移と fullPage キャプチャ（CI で 120s 超の実績あり）
+  await page.goto("/privacy");
+  await shot(page, "privacy");
+  await page.goto("/login");
+  await shot(page, "login");
+
+  await login(page);
+  await shot(page, "home");
+
+  // 検索パネルは既定で畳まれている（UC-H01）ので、開いた状態も撮る ——
+  // 期間の 開始日 / 終了日 はここにしか出ず、畳んだ home だけでは
+  // レビュアーが変更を確認できない
+  await page.getByRole("button", { name: "検索・絞り込み" }).click();
+  await shot(page, "home-filters");
+  if (Date.now() < Date.parse("2027-06-24T00:00:00+09:00")) {
+    const related = await interceptRelatedSearch(page);
+    await page.getByPlaceholder("本文・記入者で検索").fill("保育園から帰って、ゆっくりした日");
+    await page.getByRole("button", { name: "関連度で探す", exact: true }).click();
+    await page.getByRole("region", { name: "関連度の検索結果" }).waitFor();
+    await shot(page, "home-related-search");
+    await page.getByRole("button", { name: "通常検索に戻す", exact: true }).click();
+    await related.remove();
+  }
+
+  await page.goto("/calendar");
+  await shot(page, "calendar");
+  // 週表示（時間割）
+  await page.getByRole("tab", { name: "週" }).click();
+  await shot(page, "calendar-week");
+  await page.getByRole("tab", { name: "月" }).click();
+
+  // 日別シート（予定の編集）
+  const jstToday = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+  }).format(new Date());
+  const todayCell = page.locator(`[data-day="${jstToday}"]`);
+  if ((await todayCell.count()) > 0) {
+    await todayCell.click();
+    await shot(page, "calendar-day-sheet", false);
+    await page.keyboard.press("Escape");
+  }
+
+  // 毎週の予定ルール
+  await page.goto("/schedule/rules");
+  await shot(page, "schedule-rules");
+
+  // 作成シート（タブバー中央）
+  await page.goto("/");
+  await page.getByRole("button", { name: "作成" }).click();
+  await shot(page, "create-sheet", false);
+  await page.keyboard.press("Escape");
+
+  await page.goto("/menu");
+  await shot(page, "menu");
+
+  await page.goto("/weight");
+  await shot(page, "weight");
+
+  await page.goto("/pets");
+  await shot(page, "pets");
+
+  await page.goto("/settings");
+  await shot(page, "settings");
+
+  await page.goto("/records/new");
+  await shot(page, "record-new");
+
+  await page.goto("/");
+  await page.locator('main a[href^="/records/"]').first().click();
+  await page.waitForURL(/\/records\/[0-9a-f-]{36}/);
+  await shot(page, "record-detail");
+
+  // 招待リンクの受諾画面（宛先違い）。owner には他人宛ての招待も見えるため、
+  // 招待した本人がリンクを確認したときにここへ来る。
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], {
+    origin: new URL(page.url()).origin,
+  });
+  const inviteEmail = `invitee-shot-${Date.now()}@example.com`;
+  await page.goto(await issueInviteLink(page, inviteEmail));
+  await shot(page, "invite-mismatch");
+
+  // 後片付け（招待一覧を溜めない）
+  await page.goto("/settings");
+  await page
+    .locator("li", { hasText: inviteEmail })
+    .first()
+    .getByRole("button", { name: "取り消す" })
+    .click();
+
+  await page.goto("/invite/this-token-does-not-exist");
+  await shot(page, "invite-not-found");
+});
+
+test.describe("ダーク", () => {
+  test.use({ colorScheme: "dark" });
+
+  test("スクリーンショット一式（ダーク）", async ({ page }) => {
+    await login(page);
+    await shot(page, "home-dark");
+    if (Date.now() < Date.parse("2027-06-24T00:00:00+09:00")) {
+      await page.getByRole("button", { name: "検索・絞り込み" }).click();
+      const related = await interceptRelatedSearch(page);
+      await page.getByPlaceholder("本文・記入者で検索").fill("保育園から帰って、ゆっくりした日");
+      await page.getByRole("button", { name: "関連度で探す", exact: true }).click();
+      await page.getByRole("region", { name: "関連度の検索結果" }).waitFor();
+      await shot(page, "home-related-search-dark");
+      await related.remove();
+    }
+    await page.goto("/menu");
+    await shot(page, "menu-dark");
+  });
+});

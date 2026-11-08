@@ -1,0 +1,134 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { LogOut, MessageSquare, Settings } from "lucide-react";
+import LogoutConfirmDialog from "@/components/LogoutConfirmDialog";
+import UserAvatar from "@/components/UserAvatar";
+
+// ヘッダー右側のアカウントアイコン。押下で小さなメニューを開き、
+// 「アカウント設定」「送信したフィードバック」「ログアウト」を選べる。
+// ログアウトだけは確認ダイアログを挟んでから /auth/signout に POST する。
+// アイコンの中身（画像 or 頭文字）は AppHeader が解決して渡す。
+export default function AccountMenu({
+  email,
+  displayName,
+  avatarUrl,
+  initial,
+}: {
+  email: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+  initial: string;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // メニュー外のクリック・Esc で閉じる。
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
+        setMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+
+  const label = displayName || email || "アカウント";
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <button
+        type="button"
+        onClick={() => setMenuOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        aria-label="アカウントメニュー"
+        title="アカウント"
+        className="flex h-9 w-9 items-center justify-center rounded-full transition hover:opacity-90"
+      >
+        <UserAvatar
+          url={avatarUrl}
+          initial={initial}
+          size={36}
+          className="bg-surface-muted text-sm font-semibold text-foreground ring-1 ring-border"
+        />
+      </button>
+
+      {menuOpen && (
+        <div
+          role="menu"
+          aria-label="アカウント"
+          className="absolute right-0 top-full z-30 mt-2 w-60 overflow-hidden rounded-xl border border-border bg-surface py-1 shadow-lg"
+        >
+          <div className="border-b border-border px-4 py-3">
+            <p className="truncate text-sm font-medium text-foreground">
+              {label}
+            </p>
+            {email && displayName && (
+              <p className="truncate text-xs text-muted-foreground">{email}</p>
+            )}
+          </div>
+
+          <Link
+            href="/settings/account"
+            role="menuitem"
+            onClick={() => setMenuOpen(false)}
+            className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-foreground transition hover:bg-surface-muted"
+          >
+            <Settings
+              className="h-4 w-4 text-muted-foreground"
+              aria-hidden="true"
+            />
+            アカウント設定
+          </Link>
+          <Link
+            href="/feedback"
+            role="menuitem"
+            onClick={() => setMenuOpen(false)}
+            className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-foreground transition hover:bg-surface-muted"
+          >
+            <MessageSquare
+              className="h-4 w-4 text-muted-foreground"
+              aria-hidden="true"
+            />
+            送信したフィードバック
+          </Link>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setMenuOpen(false);
+              setConfirmOpen(true);
+            }}
+            className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-foreground transition hover:bg-surface-muted"
+          >
+            <LogOut
+              className="h-4 w-4 text-muted-foreground"
+              aria-hidden="true"
+            />
+            ログアウト
+          </button>
+        </div>
+      )}
+
+      {confirmOpen && (
+        <LogoutConfirmDialog onClose={() => setConfirmOpen(false)} />
+      )}
+    </div>
+  );
+}
+

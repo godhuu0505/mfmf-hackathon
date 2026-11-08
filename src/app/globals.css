@@ -1,0 +1,175 @@
+@import "tailwindcss";
+
+/* プロトタイプ（`proto/`）は本番 CSS の対象外にする。Tailwind v4 は自動でプロジェクト
+   ルートを走査するため、これが無いと D27 で PR に含めたプロトのクラスが本番の CSS に
+   混入する（実測: 検証用に置いた 3 クラスが 6 箇所混ざった）。
+   パスは**このファイルからの相対**。`"proto/"` と書くと `src/app/proto/` を指し、
+   ビルドは通るのに何も除外されない（一度これで踏んだ）。 */
+@source not "../../proto";
+/* 合意済みプロトのアーカイブも、本番CSSへ混ぜない。 */
+@source not "../../docs/archive";
+
+/* セマンティックなカラートークン。Tailwind の `bg-surface` `text-foreground`
+   `border-border` などとして使えるようにする（v4 の @theme inline）。 */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-border: var(--border-color);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+}
+
+:root {
+  --background: #f8fafc; /* slate-50 */
+  --foreground: #0f172a; /* slate-900 */
+  --surface: #ffffff;
+  --surface-muted: #f1f5f9; /* slate-100 */
+  --border-color: #e2e8f0; /* slate-200 */
+  --muted: #cbd5e1; /* slate-300 */
+  --muted-foreground: #475569; /* slate-600 */
+  --primary: #c2410c; /* orange-700。ブランド色（D33）。白文字と 5.2:1 (WCAG AA) */
+  --primary-hover: #9a3412; /* orange-800 */
+  --primary-foreground: #ffffff;
+  --skeleton-base: #e2e8f0; /* slate-200 */
+  --skeleton-shine: rgba(248, 250, 252, 0.9);
+  --focus-ring: #c2410c; /* primary に追従 */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0b1220; /* near slate-950 */
+    --foreground: #e2e8f0; /* slate-200 */
+    --surface: #111827; /* slate-900-ish */
+    --surface-muted: #1f2937; /* gray-800 */
+    --border-color: #334155; /* slate-700 */
+    --muted: #475569; /* slate-600 */
+    --muted-foreground: #94a3b8; /* slate-400 */
+    --primary: #fb923c; /* orange-400。前景 #431407 と 6.9:1 (WCAG AA) */
+    --primary-hover: #fdba74; /* orange-300 */
+    --primary-foreground: #431407; /* orange-950 */
+    --skeleton-base: #1f2937;
+    --skeleton-shine: rgba(71, 85, 105, 0.6);
+    --focus-ring: #fb923c;
+  }
+}
+
+html {
+  color-scheme: light dark;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+  /* PWA スタンドアロン表示でノッチ等に被らないようにする */
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* ボトムタブバー（AppTabBar）があるページでは、main の下端がタブバーに隠れない
+   余白を確保する。Tailwind の pb-* は @layer utilities 内のため、この無レイヤー
+   規則が優先される（ページ側で個別の pb 計算を持たなくてよい）。 */
+body:has([data-app-tabbar]) main {
+  padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
+}
+
+/* セーフエリア（左右 + 上）を考慮した水平パディング用のユーティリティ。
+   ヘッダーのスティッキー領域などで利用する。 */
+.safe-px {
+  padding-left: max(1rem, env(safe-area-inset-left));
+  padding-right: max(1rem, env(safe-area-inset-right));
+}
+
+.safe-pt {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* スクリーンリーダー専用テキスト（視覚的に隠す） */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* キーボードフォーカス時に現れる「メインへスキップ」リンク。
+   sr-only を踏襲して通常は不可視、:focus / :focus-visible 時のみ可視化する。 */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 60;
+}
+.skip-link:focus {
+  left: 0.75rem;
+  top: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.18);
+}
+
+/* ローディングのスケルトン（シマー） */
+.skeleton {
+  background-color: var(--skeleton-base);
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--skeleton-base) 100%, transparent) 0%,
+    var(--skeleton-shine) 50%,
+    color-mix(in srgb, var(--skeleton-base) 100%, transparent) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* iOS Safari の `input[type="date"]` はネイティブ表示（menulist 系の見た目）を持ち、
+   日付テキスト分の**固有幅を下限**にするため `width: 100%` を指定しても親より小さく
+   ならない。実測（iPhone 16 Pro / 402px 幅）では 1 つ 187px あり、2 列に並べると
+   隣の列へはみ出して入力欄同士が重なった（記録一覧の検索パネルの 開始日 / 終了日）。
+   ネイティブ表示を外して下限を解除する。枠線・背景・余白は各入力の Tailwind クラス
+   側で付けているので、見た目はそのまま。 */
+input[type="date"] {
+  -webkit-appearance: none;
+  appearance: none;
+  min-width: 0;
+}
+
+/* キーボード操作時のフォーカスを明確にする（a11y） */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* 動きを抑える設定を尊重する */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,0 +1,56 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+
+# next.js
+/.next/
+/out/
+next-env.d.ts
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+firebase-debug.log*
+firestore-debug.log*
+
+# env files
+.env
+.env.local
+.env*.local
+
+# typescript
+*.tsbuildinfo
+
+# supabase
+.branches
+.temp
+
+# playwright（ベースライン画像 *-snapshots はコミットする）
+/test-results/
+/playwright-report/
+
+# integration テストの seed 実 ID（globalSetup が生成）
+/tests/integration/.seed.json
+
+# vercel
+.vercel
+
+# claude code (個人ローカルの上書き設定はコミットしない)
+.claude/settings.local.json
+.env*
+
+# Python validation helpers
+__pycache__/
+*.pyc
+
+# Disposable local validation snapshots (never app data or env files)
+/work/

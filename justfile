@@ -1,0 +1,127 @@
+set shell := ["bash", "-cu"]
+
+# Default: show recipe list
+default:
+    @just --list
+
+# Local dev server (next dev)
+dev:
+    npm run dev
+
+# Dev server bound to the LAN, for checking the real app on a phone.
+# mfmf is a PWA: one-handed use, safe areas and IME can only be judged on a device.
+#
+# NOTE: prototypes are NOT checked this way anymore (D24). They are self-contained
+# static HTML published to a Claude Artifact. Use this for the real app — existing
+# screens, or when a change must be seen running against real data.
+# PWA standalone / offline behaviour needs HTTPS, so use a Vercel Preview for that.
+dev-lan:
+    @set -e; \
+    IPS="$(hostname -I 2>/dev/null || true)"; \
+    if [ -z "$IPS" ]; then \
+        IPS="$(ipconfig getifaddr en0 2>/dev/null || true)"; \
+    fi; \
+    echo "[dev-lan] 候補アドレス（スマホと同じネットワークのものを選ぶ）:"; \
+    FOUND=0; \
+    for ip in $IPS; do \
+        case "$ip" in \
+            *:*) continue ;; \
+        esac; \
+        case "$ip" in \
+            172.1[6-9].*|172.2[0-9].*|172.3[01].*) NOTE="  ← Docker の可能性" ;; \
+            10.*) NOTE="  ← VPN の可能性" ;; \
+            *) NOTE="" ;; \
+        esac; \
+        echo "  http://$ip:3000$NOTE"; \
+        FOUND=1; \
+    done; \
+    if [ "$FOUND" = "0" ]; then \
+        echo "  （自動判定できませんでした。手元の LAN IP を確認してください）"; \
+    fi; \
+    npm run dev -- -H 0.0.0.0
+
+# Quick local gate: lint -> typecheck -> unit tests -> build
+check:
+    npm run lint
+    npm run typecheck
+    npm run test:unit
+    npm run build
+
+# Full disposable local validation; requires Docker, Supabase CLI, Java 21, age and Playwright.
+check-all:
+    npm run check:local
+
+# Start Next.js via Docker
+up:
+    docker compose up --build
+
+# Stop Docker stack
+down:
+    docker compose down
+
+# Initial environment setup (run once). Starts Supabase and writes .env.local.
+setup:
+    @set -e; \
+    if [ -f .env.local ]; then \
+        echo "[setup] .env.local already exists. Aborting to avoid overwrite."; \
+        exit 1; \
+    fi; \
+    command -v supabase >/dev/null || { \
+        echo "[setup] supabase CLI not found. brew install supabase/tap/supabase"; exit 1; \
+    }; \
+    echo "[setup] Ensuring local Supabase stack is running..."; \
+    supabase status >/dev/null 2>&1 || supabase start; \
+    echo "[setup] Reading anon key from supabase status..."; \
+    ANON_KEY="$(supabase status -o env | awk -F= '/^ANON_KEY=/{print $2}' | tr -d '\"')"; \
+    if [ -z "$ANON_KEY" ]; then \
+        echo "[setup] Failed to read ANON_KEY from supabase status"; exit 1; \
+    fi; \
+    echo "[setup] Generating TOKEN_ENC_KEY..."; \
+    TOKEN_ENC_KEY="$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")"; \
+    if [ -z "$TOKEN_ENC_KEY" ]; then \
+        echo "[setup] Failed to generate TOKEN_ENC_KEY"; exit 1; \
+    fi; \
+    echo "[setup] Writing .env.local from .env.local.example..."; \
+    cp .env.local.example .env.local; \
+    sed -i.bak -E 's#^NEXT_PUBLIC_SUPABASE_URL=.*#NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321#' .env.local; \
+    sed -i.bak -E "s#^NEXT_PUBLIC_SUPABASE_ANON_KEY=.*#NEXT_PUBLIC_SUPABASE_ANON_KEY=$ANON_KEY#" .env.local; \
+    sed -i.bak -E "s#^TOKEN_ENC_KEY=.*#TOKEN_ENC_KEY=$TOKEN_ENC_KEY#" .env.local; \
+    rm -f .env.local.bak; \
+    echo "[setup] Done."; \
+    echo "[setup] Next: 'just up' (or 'just dev') で起動できます。"; \
+    echo "[setup]       Google ログイン / Drive 連携を使う場合のみ 'just setup-google' を実行。"; \
+    echo "[setup]       メール/パスワードだけなら .env.local に SIGNUP_ENABLED=true で /signup を開放。"
+
+# Configure Google OAuth interactively. Run after Google Cloud OAuth client is created.
+# Writes secrets to supabase/.env and .env.local, enables [auth.external.google], restarts Supabase.
+setup-google:
+    @set -e; \
+    if [ ! -f .env.local ]; then \
+        echo "[setup-google] .env.local が無い。先に 'just setup' を実行してください。"; exit 1; \
+    fi; \
+    if [ ! -f supabase/config.toml ]; then \
+        echo "[setup-google] supabase/config.toml が無い。"; exit 1; \
+    fi; \
+    echo "[setup-google] Google Cloud Console で発行した OAuth クライアント情報を入力します。"; \
+    echo "[setup-google] リダイレクト URI は http://127.0.0.1:54321/auth/v1/callback を登録済みであること。"; \
+    read -r -p "GOOGLE_CLIENT_ID: " GOOGLE_CLIENT_ID; \
+    read -rs -p "GOOGLE_CLIENT_SECRET: " GOOGLE_CLIENT_SECRET; echo; \
+    if [ -z "$GOOGLE_CLIENT_ID" ] || [ -z "$GOOGLE_CLIENT_SECRET" ]; then \
+        echo "[setup-google] 値が空。中止。"; exit 1; \
+    fi; \
+    echo "[setup-google] supabase/.env に書き込み..."; \
+    { \
+        echo "SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID"; \
+        echo "SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET=$GOOGLE_CLIENT_SECRET"; \
+    } > supabase/.env; \
+    echo "[setup-google] .env.local の Drive 連携用キーを更新..."; \
+    sed -i.bak -E "s#^GOOGLE_CLIENT_ID=.*#GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID#" .env.local; \
+    sed -i.bak -E "s#^GOOGLE_CLIENT_SECRET=.*#GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET#" .env.local; \
+    rm -f .env.local.bak; \
+    echo "[setup-google] supabase/config.toml の [auth.external.google] を有効化..."; \
+    sed -i.bak '/^\[auth\.external\.google\]/,/^\[/ s/^enabled = false/enabled = true/' supabase/config.toml; \
+    rm -f supabase/config.toml.bak; \
+    echo "[setup-google] Supabase を再起動して設定を反映..."; \
+    supabase stop >/dev/null 2>&1 || true; \
+    supabase start; \
+    echo "[setup-google] Done. ブラウザで /login の Google ログインを試してください。"

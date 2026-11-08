@@ -1,0 +1,57 @@
+import { defineConfig, devices } from "@playwright/test";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+
+// System 層（D25 / D30 / D31）: next start ＋ ローカル Supabase に対して実行する。
+// 前提: `npx supabase start` が済んでいて、以下の env が設定されていること
+//   NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY（ローカル値）
+// `npm run build` してから `npm run test:e2e`（webServer が next start を起動する）。
+const PORT = Number(process.env.MFMF_E2E_PORT ?? 3100);
+if (!Number.isInteger(PORT) || PORT < 1024 || PORT > 65535) throw new Error("Invalid local E2E port");
+
+// Service Worker が発行する fetch を Playwright のルーティング/ネットワーク制御の
+// 対象にする（既定では SW のリクエストは素通しになり、オフライン遮断が SW に効かない）。
+// serviceWorker.spec.ts のオフラインフォールバック検証に必要。
+process.env.PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS ??= "1";
+
+export default defineConfig({
+  testDir: "./tests/e2e",
+  globalSetup: "./tests/e2e/global-setup.ts",
+  timeout: 30_000,
+  // CI ランナーではブラウザクラッシュや Server Action 応答の間欠ハング（#137）が
+  // 稀に起きるため 1 回だけ再試行する。再試行で通ったテストはレポートに
+  // flaky と明示されるので、不安定さが隠れることはない。
+  retries: process.env.CI ? 1 : 0,
+  // 全 spec が同じ E2E ユーザーを共有し「一覧の先頭」を検証するため直列で回す
+  // （並列にすると別ファイルの記録作成が先頭カードのアサーションと競合する）
+  workers: 1,
+  // 記録アプリはスマホ前提（片手・セーフエリア）なのでモバイル画面で回す
+  projects: [{ name: "mobile-chromium", use: { ...devices["Pixel 7"] } }],
+  expect: {
+    // VRT(D31): フォントの AA 差だけを許容する小さな閾値。ベースラインは Linux
+    // （CI と同一の chromium ビルド + Noto CJK フォント）で生成してコミットする。
+    toHaveScreenshot: { maxDiffPixelRatio: 0.02 },
+  },
+  use: {
+    // NextURL は loopback の 127.0.0.1 を localhost に正規化する。
+    // auth Route Handler の Origin 検証・redirect・Cookie のホストを揃える。
+    baseURL: `http://localhost:${PORT}`,
+    locale: "ja-JP",
+    timezoneId: "Asia/Tokyo",
+    trace: "retain-on-failure",
+  },
+  webServer: {
+    command: `npm run start -- -p ${PORT}`,
+    url: `http://localhost:${PORT}/login`,
+    reuseExistingServer: !process.env.CI && !process.env.MFMF_E2E_PORT,
+    env: {
+      GOOGLE_LOGIN_ALLOWED_EMAILS: "e2e-editor@example.com",
+      // Regular feature flags on the local test server, never an app auth bypass.
+      // The test-only loader forbids Google credentials/Ranking before network I/O.
+      MFMF_RANKING_ENABLED: "true",
+      MFMF_RANKING_EXPIRES_AT: "2027-06-24T00:00:00+09:00",
+      NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${pathToFileURL(resolve(__dirname, "tests/e2e/ranking-network-guard.mjs")).href}`.trim(),
+    },
+    timeout: 60_000,
+  },
+});

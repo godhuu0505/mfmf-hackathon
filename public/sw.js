@@ -1,0 +1,112 @@
+// mfmf service worker
+// 目的: インストール可能化 + 静的アセットの高速化 + オフライン時のフォールバック。
+//
+// 重要: Supabase の API レスポンスや署名付き写真 URL（private / 期限付き）は
+// 一切キャッシュしない。認証状態が絡む情報をブラウザに残さないため、
+// ナビゲーションは network-first（オフライン時のみシェルへフォールバック）。
+
+// ⚠️ この SW のキャッシュ戦略・プリキャッシュ内容を変えるときは VERSION を上げること。
+// キャッシュ名に VERSION が入っているため、新 SW の install は稼働中 SW のキャッシュと
+// 別領域に書き込む。上げ忘れると、install が途中で失敗したときに稼働中 SW の
+// キャッシュ（特に /offline とそのチャンクの組）を中途半端に上書きして壊す。
+// 旧バージョンのキャッシュは activate が掃除する。
+const VERSION = "v3-icons-20261108";
+const STATIC_CACHE = `mfmf-static-${VERSION}`;
+const SHELL_CACHE = `mfmf-shell-${VERSION}`;
+const OFFLINE_URL = "/offline";
+
+const PRECACHE = [
+  OFFLINE_URL,
+  "/icon-192.png?v=20261108",
+  "/icon-512.png?v=20261108",
+  "/icon-maskable-512.png?v=20261108",
+  "/apple-touch-icon.png?v=20261108",
+  "/favicon-32.png?v=20261108",
+  "/favicon.ico?v=20261108",
+];
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    (async () => {
+      const cache = await caches.open(SHELL_CACHE);
+      await cache.addAll(PRECACHE);
+      // /offline の HTML が参照するビルド成果物（JS/CSS）も必ず先読みする。
+      // これが無いとオフライン時にフォールバック HTML は出るが hydration に失敗し、
+      // Next のエラー画面に置き換わる（E2E のオフライン検証で発覚）。
+      // 対象は同一オリジンの /_next/static のみ（Supabase を触らない不変条件は不変）。
+      // 1 つでも取れなければ install ごと失敗させる —— 中途半端に有効化すると
+      // 上記の壊れたフォールバックを配る SW になる。失敗時はブラウザが次の機会に
+      // インストールを再試行する。
+      const res = await cache.match(OFFLINE_URL);
+      const html = res ? await res.clone().text() : "";
+      const assets = [
+        ...new Set(html.match(/\/_next\/static\/[^"'\s>]+/g) ?? []),
+      ];
+      if (assets.length > 0) {
+        const staticCache = await caches.open(STATIC_CACHE);
+        await staticCache.addAll(assets);
+      }
+    })(),
+  );
+  self.skipWaiting();
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(
+        keys
+          .filter((k) => ![STATIC_CACHE, SHELL_CACHE].includes(k))
+          .map((k) => caches.delete(k)),
+      ),
+    ),
+  );
+  self.clients.claim();
+});
+
+self.addEventListener("fetch", (event) => {
+  const { request } = event;
+
+  // GET 以外（フォーム送信 / Server Action など）は素通し
+  if (request.method !== "GET") return;
+
+  const url = new URL(request.url);
+
+  // 同一オリジン以外（Supabase ストレージ/API 等）は介入しない
+  if (url.origin !== self.location.origin) return;
+
+  // Supabase 認証コールバック等は触らない
+  if (url.pathname.startsWith("/auth")) return;
+
+  // ページ遷移: network-first → 失敗時オフラインページ
+  if (request.mode === "navigate") {
+    event.respondWith(
+      fetch(request).catch(() => caches.match(OFFLINE_URL)),
+    );
+    return;
+  }
+
+  // 静的アセット（Next のビルド成果物 / アイコン）は stale-while-revalidate
+  const isStatic =
+    url.pathname.startsWith("/_next/static") ||
+    url.pathname.startsWith("/icon-") ||
+    url.pathname === "/apple-touch-icon.png" ||
+    url.pathname === "/favicon-32.png" ||
+    url.pathname === "/favicon.ico" ||
+    url.pathname === "/manifest.webmanifest";
+
+  if (isStatic) {
+    event.respondWith(
+      caches.open(STATIC_CACHE).then(async (cache) => {
+        const cached = await cache.match(request);
+        const network = fetch(request)
+          .then((res) => {
+            if (res && res.status === 200) cache.put(request, res.clone());
+            return res;
+          })
+          .catch(() => cached);
+        return cached || network;
+      }),
+    );
+  }
+});

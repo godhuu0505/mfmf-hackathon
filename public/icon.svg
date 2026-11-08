@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">mfmf — ハートの肉球</title>
+  <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f4a36f"/><stop offset="1" stop-color="#ed8754"/></linearGradient></defs>
+  <path fill="url(#bg)" d="M0 0h512v512H0z"/>
+  <g fill="#fff5df">
+      <ellipse cx="155" cy="209" rx="27" ry="37" transform="rotate(-28 155 209)"/>
+      <ellipse cx="217" cy="168" rx="28" ry="37" transform="rotate(-10 217 168)"/>
+      <ellipse cx="285" cy="168" rx="28" ry="37" transform="rotate(10 285 168)"/>
+      <ellipse cx="347" cy="209" rx="27" ry="37" transform="rotate(28 347 209)"/>
+      <path d="M179 279c20-24 29-53 57-46 14 4 26 4 40 0 28-7 38 22 58 46 34 42 7 87-30 73-32-12-64-12-96 0-37 14-63-31-29-73Z"/>
+    </g>
+    <path d="M256 324c-7-5-32-21-32-38 0-20 24-24 32-8 8-16 32-12 32 8 0 17-25 33-32 38Z" fill="#de704e"/>
+</svg>

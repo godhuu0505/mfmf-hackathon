@@ -1,0 +1,227 @@
+# Google ログイン / Drive 連携のセットアップ
+
+mfmf のログインは **Google OAuth** と **メール/パスワード**の 2 系統で、本書は**前者**と、
+将来の **Google Drive 連携**に必要な Google Cloud / Supabase の設定をまとめたものです。
+**メール/パスワードだけで動かすなら本書は不要**（→ [../../README.md](../../README.md)）。
+
+コード側は、Google ログイン（ログイン画面・コールバック・トークン保存）まで実装済み。
+**写真の Drive 保存は未実装**（トークン保存の基盤のみ。現状の写真は Supabase Storage）。
+
+> 写真は `drive.file` スコープ（アプリが作成・選択したファイルのみアクセス）で扱います。
+> このスコープは Google の OAuth 監査（センシティブスコープ審査）の対象外で、申請なしに
+> 本番利用できます。
+
+---
+
+## 全体像
+
+```
+ブラウザ ──Google ログイン──▶ Google 同意画面
+   │                              │ 認可コード
+   ▼                              ▼
+/auth/callback ──exchangeCodeForSession──▶ Supabase Auth（セッション発行）
+   │ provider_refresh_token を暗号化して
+   ▼ google_credentials に保存
+画像表示・アップロードで refresh token → 短命 access token を発行（サーバー）
+```
+
+設定するものは 3 つです。
+
+1. **Google Cloud**: OAuth クライアント（Client ID / Secret）と同意画面
+2. **Supabase**: Google プロバイダを有効化し、上記 Client ID / Secret を設定
+3. **環境変数**: `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `TOKEN_ENC_KEY`
+
+---
+
+## 1. Google Cloud で OAuth クライアントを作る
+
+[Google Cloud Console](https://console.cloud.google.com/) で作業します。
+
+### 1-1. プロジェクトを用意
+
+- 既存プロジェクトを使うか、新規作成（名前は任意。例: `mfmf`）。
+
+### 1-2. Google Drive API を有効化
+
+- 「API とサービス」▶「ライブラリ」で **Google Drive API** を検索し、**有効にする**。
+
+### 1-3. OAuth 同意画面
+
+- 「API とサービス」▶「OAuth 同意画面」。
+- User Type は **External**（外部）。
+- アプリ名・サポートメール・デベロッパー連絡先を入力。
+- **スコープは追加不要**（`drive.file` は同意画面でのスコープ登録が不要な非センシティブスコープ）。
+- 公開ステータス:
+  - **テスト**のままなら、利用する Google アカウント（夫婦の 2 つ）を「テストユーザー」に追加すれば使えます。
+    refresh token の有効期限が 7 日になる点に注意（期限切れ後は再ログインが必要）。
+  - 期限を気にしたくなければ **本番（In production）に公開**します。`drive.file` のみなので
+    審査・動画提出は不要で、警告は出ません。
+
+### 1-4. OAuth クライアント ID を作成
+
+- 「API とサービス」▶「認証情報」▶「認証情報を作成」▶「OAuth クライアント ID」。
+- アプリケーションの種類: **ウェブアプリケーション**。
+- **承認済みのリダイレクト URI** に Supabase のコールバックを追加（次章の値）:
+  ```
+  https://YOUR_PROJECT_REF.supabase.co/auth/v1/callback
+  ```
+  `YOUR_PROJECT_REF` は Supabase の Project Ref（プロジェクト URL のサブドメイン）。
+- 作成後に表示される **クライアント ID** と **クライアントシークレット** を控える。
+
+> リダイレクト URI は **Supabase の** `/auth/v1/callback` を指定します。アプリ側の
+> `/auth/callback` ではありません（アプリ側 URL は次章の Supabase 設定で登録します）。
+
+---
+
+## 2. Supabase で Google プロバイダを有効化
+
+### 2A. リモート Supabase の場合（ダッシュボード）
+
+#### 2A-1. Google プロバイダ
+
+- 「Authentication」▶「Sign In / Providers」（旧 Providers）▶ **Google** を有効化。
+- 1-4 で取得した **Client ID** と **Client Secret** を入力して保存。
+
+#### 2A-2. リダイレクト URL の許可
+
+- 「Authentication」▶「URL Configuration」。
+- **Site URL** に本番 URL（例: `https://mfmf.example.com`）を設定。
+- **Redirect URLs** に、アプリ側コールバックを使う URL を追加:
+  ```
+  http://localhost:3000/auth/callback
+  https://YOUR_APP_DOMAIN/auth/callback
+  ```
+  （ローカル開発と本番の両方。Vercel のプレビュー URL を使う場合はそれも追加）
+
+### 2B. ローカル Supabase（`supabase start`）の場合
+
+#### 2B-1. Google Cloud Console のリダイレクト URI
+
+1-4 で登録する **承認済みのリダイレクト URI** はローカル Supabase 用の値：
+
+```
+http://127.0.0.1:54321/auth/v1/callback
+```
+
+> `localhost` ではなく `127.0.0.1` で登録するのが慣行（Supabase ローカル CLI が `127.0.0.1`
+> で待ち受けるため）。`localhost` を登録するとコールバック先と一致せず認証に失敗します。
+
+#### 2B-2. `just setup-google` で対話投入（推奨）
+
+`just setup` 実行済みであれば、以下のコマンド 1 つで：
+
+- `supabase/.env` に Supabase Auth 用の認証情報を書き込み
+- `.env.local` の Drive 連携用 `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` を更新
+- `supabase/config.toml` の `[auth.external.google]` を `enabled = true` に切り替え
+- `supabase stop && supabase start` で反映
+
+```bash
+just setup-google
+```
+
+プロンプトで Client ID と Client Secret を入力（Secret は非表示入力）。完了後、ブラウザで
+`/login` の Google ログインを試せます。
+
+#### 2B-3. 手動で設定する場合（参考）
+
+`just setup-google` を使わない場合は以下の 3 ファイルを編集して `supabase stop && supabase start`：
+
+**`supabase/config.toml`**（既に雛形あり。`enabled = false` を `true` に変えるだけ）:
+
+```toml
+[auth.external.google]
+enabled = true
+client_id = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID)"
+secret = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET)"
+redirect_uri = ""
+skip_nonce_check = false
+```
+
+**`supabase/.env`**（git 無視対象）:
+
+```dotenv
+SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=...
+SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET=...
+```
+
+**`.env.local`**（アプリの Drive 連携用に同じ値を）:
+
+```dotenv
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+```
+
+> アプリ側コールバック (`http://localhost:3000/auth/callback` /
+> `http://127.0.0.1:3000/auth/callback`) は本リポジトリの `config.toml` の
+> `additional_redirect_urls` に既に含めています。ブラウザでどちらの origin を使っても OK。
+
+---
+
+## 3. 環境変数を設定
+
+ローカルは `.env.local`、本番は Vercel の環境変数に設定します（[configuration.md](../reference/configuration.md) も参照）。
+
+| 変数 | 値 |
+| --- | --- |
+| `GOOGLE_CLIENT_ID` | 1-4 のクライアント ID |
+| `GOOGLE_CLIENT_SECRET` | 1-4 のクライアントシークレット |
+| `TOKEN_ENC_KEY` | 乱数文字列（`just setup` 利用時は自動生成） |
+
+`just setup` を実行した場合は `TOKEN_ENC_KEY` が自動生成・投入されます。
+手動で発行する場合：
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+```
+
+> いずれも **サーバー専用**（`NEXT_PUBLIC_` を付けない）。`TOKEN_ENC_KEY` を変更・紛失すると
+> 保存済みの refresh token を復号できなくなり、各自の再ログインが必要になります。
+
+---
+
+## 4. データベースを更新
+
+`supabase/migrations/20260616130711_google_credentials.sql` を適用します（連携トークンの保存先）。
+
+- ローカル/CLI: `supabase db push`（または `supabase migration up`）
+- リモート直適用する場合は migration の SQL を Supabase の SQL Editor で実行。
+
+---
+
+## 5. 動作確認
+
+1. `npm run dev` で起動し `/login` を開く。
+2. 「Google でログイン」▶ 同意画面で **Drive の `drive.file` 許可**に同意。
+3. `/`（一覧）に戻ればログイン成功。
+4. Supabase の `google_credentials` テーブルに自分の行ができ、`refresh_token_enc` が
+   **暗号化された文字列**（平文でないこと）で入っていることを確認。
+
+うまくいかないときは `/login?error=oauth`（認証失敗）や `/login?error=drive`（トークン保存失敗）に
+戻ります。Redirect URL の登録漏れ、Client ID/Secret の不一致、`TOKEN_ENC_KEY` 未設定が主な原因です。
+
+---
+
+## ログイン方式が複数あることについて
+
+本アプリのログインは **Google OAuth** と **メール/パスワード**の 2 系統です（S5 で後者を追加）。
+**Google 連携が必須なのは Drive 連携を使う場合だけ**で、記録の閲覧・作成だけなら
+メール/パスワードで完結します。
+
+同じメールアドレスで両方を使った場合の挙動（1 ユーザーに統合されるのか別ユーザーになるのか）は
+[../explanation/identity-linking.md](../explanation/identity-linking.md) にまとめてあります。
+**別アドレスのアカウントは別ユーザー**になるので、記録を共有したい相手は
+`/settings` から世帯へ招待してください（**editor / viewer**。owner は招待では選べず、
+参加後に既存 owner が昇格させます）。
+
+---
+
+## このあとの実装（参考）
+
+> 以下は Drive 連携内のローカルな実装ステップ。全体ロードマップの Phase 番号
+> （`docs/explanation/roadmap.md` §6）とは無関係。
+
+- **ステップ 2**: クライアントから Drive へ直接アップロード、`record_photos` を Drive ファイル ID 化。
+- **ステップ 3**: 画像プロキシ `/api/photo/[fileId]` + CDN キャッシュで表示。
+- **ステップ 4**: 共有フォルダの設定 UI。
+
+トークン発行のサーバー実装は `src/lib/google/token.ts`、暗号化は `src/lib/google/crypto.ts`。
